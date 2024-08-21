@@ -1,0 +1,132 @@
+# Install and load necessary packages
+# install.packages(c("shiny", "dplyr", "lubridate", "readr", "openxlsx", "shinyWidgets"))
+library(shiny)
+library(dplyr)
+library(lubridate)
+library(readr)
+library(openxlsx)
+library(shinyWidgets)
+
+# Define UI
+ui <- fluidPage(
+  titlePanel("JMMI quarter 2 coverage Analysis"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("organization", "Select Organization:", multiple = TRUE, choices = NULL),
+      selectInput("county", "Select County:", multiple = TRUE, choices = NULL),
+      pickerInput("market_name", "Select Market:", multiple = TRUE, choices = NULL, options = list(`actions-box` = TRUE, `select-all-text` = "Select All")),
+      actionButton("analyze", "Analyze"),
+      downloadButton("downloadOriginalData", "Download Original Data")
+    ),
+    
+    mainPanel(
+      tableOutput("coverageTable"),
+      downloadButton("downloadCoverage", "Download Market Level Coverage Data"),
+      tableOutput("summaryTable"),
+      downloadButton("downloadSummary", "Download County Level Coverage Data")
+    )
+  )
+)
+
+# Define Server logic
+server <- function(input, output, session) {
+  
+  # Load your data
+  df <- read.csv("Data10.csv")  # Update the path to your actual data file
+  
+  # Populate organization select input dynamically
+  observe({
+    updateSelectInput(session, "organization", choices = unique(df$organization))
+  })
+  
+  # Update county select input based on selected organization
+  observe({
+    org <- input$organization
+    # Filter counties based on selected organizations
+    counties <- unique(df %>%
+                         filter(organization %in% org) %>%
+                         pull(county))
+    updateSelectInput(session, "county", choices = counties)
+  })
+  
+  # Update market select input based on organization and county
+  observe({
+    org <- input$organization
+    county <- input$county
+    # Filter markets based on selected organization and county
+    markets <- unique(df %>%
+                        filter(organization %in% org & county %in% county) %>%
+                        pull(market_name))
+    updatePickerInput(session, "market_name", choices = markets)
+  })
+  
+  analyze_data <- reactive({
+    selected_organization <- input$organization
+    selected_county <- input$county
+    selected_markets <- input$market_name
+    
+    # Filter data based on selected organization, county, and market
+    filtered_data <- df %>%
+      filter(organization %in% selected_organization & 
+               county %in% selected_county & 
+               market_name %in% selected_markets) %>%
+      group_by(organization, county,sub_county, ward, market_name) %>%
+      summarise(across(starts_with("items."), sum, na.rm = TRUE))
+    
+    return(filtered_data)
+  })
+  
+  county_summary <- reactive({
+    # Summarize the number of items collected across each county
+    summary_data <- df %>%
+      group_by(county) %>%
+      summarise(across(starts_with("items."), sum, na.rm = TRUE))
+    
+    return(summary_data)
+  })
+  
+  output$coverageTable <- renderTable({
+    analyze_data()
+  })
+  
+  output$summaryTable <- renderTable({
+    county_summary()
+  })
+  
+  output$downloadCoverage <- downloadHandler(
+    filename = function() {
+      paste("coverage_market_level-", Sys.Date(), ".xlsx", sep = "")
+    },
+    content = function(file) {
+      wb <- createWorkbook()
+      addWorksheet(wb, "Market Level Coverage")
+      writeData(wb, "Market Level Coverage", analyze_data())
+      saveWorkbook(wb, file, overwrite = TRUE)
+    }
+  )
+  
+  output$downloadSummary <- downloadHandler(
+    filename = function() {
+      paste("coverage_county_level-", Sys.Date(), ".xlsx", sep = "")
+    },
+    content = function(file) {
+      wb <- createWorkbook()
+      addWorksheet(wb, "County Level Coverage")
+      writeData(wb, "County Level Coverage", county_summary())
+      saveWorkbook(wb, file, overwrite = TRUE)
+    }
+  )
+  
+  output$downloadOriginalData <- downloadHandler(
+    filename = function() {
+      paste("original_data-", Sys.Date(), ".csv", sep = "")
+    },
+    content = function(file) {
+      write.csv(df, file, row.names = FALSE)
+    }
+  )
+}
+
+# Run the application 
+shinyApp(ui = ui, server = server)
