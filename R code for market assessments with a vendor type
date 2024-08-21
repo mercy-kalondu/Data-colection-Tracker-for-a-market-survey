@@ -1,0 +1,121 @@
+library(shiny)
+library(readxl)
+library(writexl)
+library(dplyr)
+library(tidyr)
+library(DT)
+
+# Define UI
+ui <- fluidPage(
+  titlePanel("SOM JMMI Data Collection Dashboard"),
+  
+  mainPanel(
+    # Output: Display dashboard information
+    textOutput("total_surveys"),
+    DTOutput("survey_per_district"),
+    DTOutput("items_sold_summary"),
+    downloadButton("download_survey_per_district", "Download Survey Per District (CSV)"),
+    downloadButton("download_items_sold_summary", "Download Items Sold Summary (CSV)"),
+    downloadButton("download_original_data", "Download Original Data (XLSX)")
+  )
+)
+
+# Define server logic
+server <- function(input, output, session) {
+  
+  # Reactive values to store processed data
+  data_processed <- reactiveValues()
+  
+  # Preload example Excel data
+  
+  observe({
+    data_processed$example_data <- read_excel("data12.xlsx", sheet="SOM 2003 JMMI Quarter Three ...") %>%
+      filter(consent == "yes") # Filter to include only surveys where consent is yes
+    # Convert start and end columns to datetime objects
+    data_processed$example_data$start <- as.POSIXct(data_processed$example_data$start)
+    data_processed$example_data$end <- as.POSIXct(data_processed$example_data$end)
+  })
+  
+  
+  # Display total surveys
+  output$total_surveys <- renderText({
+    if (!is.null(data_processed$example_data)) {
+      paste("Total surveys collected:", nrow(data_processed$example_data))
+    } else {
+      "Total surveys collected: 0"
+    }
+  })
+  
+  # Calculate total surveys per district with enumerator_org and vendor_type
+  output$survey_per_district <- renderDT({
+    if (!is.null(data_processed$example_data)) {
+      survey_summary <- data_processed$example_data %>%
+        group_by(call_location, enumerator_org, vendor_type) %>%
+        summarise(Surveys = n(), .groups = 'drop')
+      datatable(data.frame(survey_summary))
+    } else {
+      datatable(data.frame())
+    }
+  })
+  
+  # Calculate total items sold per item including call_location, enumerator_org, and vendor_type
+  output$items_sold_summary <- renderDT({
+    if (!is.null(data_processed$example_data)) {
+      item_columns <- grep("items_sold/", names(data_processed$example_data), value = TRUE)
+      items_sold_summary <- data_processed$example_data %>%
+        group_by(call_location, enumerator_org, vendor_type) %>%
+        summarise(across(all_of(item_columns), sum, na.rm = TRUE), .groups = 'drop') %>%
+        pivot_longer(cols = all_of(item_columns), names_to = "Item", values_to = "Total prices collected")
+      datatable(data.frame(items_sold_summary))
+    } else {
+      datatable(data.frame())
+    }
+  })
+  
+  # Download Survey Per District button handler
+  output$download_survey_per_district <- downloadHandler(
+    filename = function() {
+      "survey_per_district.csv"
+    },
+    content = function(file) {
+      if (!is.null(data_processed$example_data)) {
+        survey_summary <- data_processed$example_data %>%
+          group_by(call_location, enumerator_org, vendor_type) %>%
+          summarise(Surveys = n(), .groups = 'drop')
+        write.csv(data.frame(survey_summary), file, row.names = FALSE)
+      }
+    }
+  )
+  
+  # Download Items Sold Summary button handler
+  output$download_items_sold_summary <- downloadHandler(
+    filename = function() {
+      "items_sold_summary.csv"
+    },
+    content = function(file) {
+      if (!is.null(data_processed$example_data)) {
+        item_columns <- grep("items_sold/", names(data_processed$example_data), value = TRUE)
+        items_sold_summary <- data_processed$example_data %>%
+          group_by(call_location, enumerator_org, vendor_type) %>%
+          summarise(across(all_of(item_columns), sum, na.rm = TRUE), .groups = 'drop') %>%
+          pivot_longer(cols = all_of(item_columns), names_to = "Item", values_to = "Total prices collected")
+        write.csv(data.frame(items_sold_summary), file, row.names = FALSE)
+      }
+    }
+  )
+  
+  # Download Original Data button handler
+  output$download_original_data <- downloadHandler(
+    filename = function() {
+      "original_data.xlsx"
+    },
+    content = function(file) {
+      if (!is.null(data_processed$example_data)) {
+        writexl::write_xlsx(data_processed$example_data, file)
+      }
+    }
+  )
+}
+
+# Run the application
+shinyApp(ui = ui, server = server)
